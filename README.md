@@ -25,3 +25,17 @@ node app.js
 ## Credit
 
 - [Crepe-Inc/Iridium](https://github.com/Crepe-Inc/Iridium)
+
+## Usage
+
+Search and mod:
+
+- `plainLoginHead` to `4567` + `PlayerLoginReq` HEX CmdId
+- `plainWindSeedHead` to `4567` + `PlayerInjectFixNotify` HEX CmdId
+- `plainRTTHead` to  `4567` + `WorldPlayerRTTNotify` (or any other packet always don't have Packet Head) HEX CmdId
+- `packetSource` if the server's port is not `22101` or `22102`
+
+And file:
+
+- `plaintext.bin` for the full `PlayerInjectFixNotify` body and trailing `89AB`
+- `config.json` for path of pcap file (Captured by Wireshark, format: Wireshark/tcpdump `.pcap`)

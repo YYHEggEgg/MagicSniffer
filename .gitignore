@@ -1,2 +1,4 @@
 node_modules
 key.txt
+decrypted-pcap(non-gettoken).log
+*.pcap

@@ -123,19 +123,15 @@ parser.on("packet", packet => {
     KCPContentMap[peerID].update(hrTime[0] * 1000000 + hrTime[1] / 1000)
     KCPContentMap[peerID].wndsize(1024, 1024)
 
-    let recv
-    let bPackets = []
-    do {
-        recv = KCPContentMap[peerID].recv()
-        if (!recv) break
-        bPackets.push(recv)
-    } while (recv)
-    hrTime = process.hrtime()
-    KCPContentMap[peerID].update(hrTime[0] * 1000000 + hrTime[1] / 1000)
+    let recv = KCPContentMap[peerID].recv()
+    if (recv) {
+        hrTime = process.hrtime()
+        KCPContentMap[peerID].update(hrTime[0] * 1000000 + hrTime[1] / 1000)
 
-    packetConfig.bPackets = bPackets
+        packetConfig.bPacket = recv
 
-    allPackets.push(packetConfig)
+        allPackets.push(packetConfig)
+    }
 })
 
 const xor = (data, key) => {
@@ -188,85 +184,99 @@ const bytesToHex = bytes => {
 }
 
 parser.on("end", async () => {
-    const dispatchHead = allPackets[0].bPackets[0].toString("hex").slice(0, 4)
+    const dispatchHead = allPackets[0].bPacket.toString("hex").slice(0, 4)
 
     // MAGIC VARIATED IN DIFF VERSION
     let isLoginFound = false
-    let plainLoginHead = hexToBytes("45670070")
-    let plainWindSeedHead = hexToBytes("456704AF")
-    let plainRTTHead = hexToBytes("45670016")
+    let plainLoginHead = hexToBytes("456760B9")
+    let plainWindSeedHead = hexToBytes("45675730")
+    let plainRTTHead = hexToBytes("456774D9")
     let plainRTTHead2 = hexToBytes("0")
 
     let headXORKey
     let windSeedHead
     let rttHead
     let headLengthXORKey
+    let finalXORKeyHex
 
     allPackets.forEach(packet => {
-        if (packet.bPackets.length > 0) {
-            const hexString = packet.bPackets[0].toString("hex")
-            const head = hexString.slice(0, 4)
+        const hexString = packet.bPacket.toString("hex")
+        const head = hexString.slice(0, 4)
 
-            if (head != dispatchHead && !isLoginFound) {
-                print("Found LoginReq!")
-                const orgBytes = packet.bPackets[0].slice(0, 4).readUInt32BE()
-                headXORKey = xorBytes(hexToBytes(zero(orgBytes.toString(16), 8)), plainLoginHead)
-                print("Head XOR Key Found: " + bytesToHex(headXORKey))
-                rttHead = xorBytes(headXORKey, plainRTTHead)
-                windSeedHead = xorBytes(headXORKey, plainWindSeedHead)
-                print("RTT Head: " + bytesToHex(rttHead))
-                print("Wind Seed Head: " + bytesToHex(windSeedHead))
-                isLoginFound = true
-            }
+        if (head != dispatchHead && !isLoginFound) {
+            print("Found LoginReq!")
+            const orgBytes = packet.bPacket.slice(0, 4).readUInt32BE()
+            headXORKey = xorBytes(hexToBytes(zero(orgBytes.toString(16), 8)), plainLoginHead)
+            print("Head XOR Key Found: " + bytesToHex(headXORKey))
+            rttHead = xorBytes(headXORKey, plainRTTHead)
+            windSeedHead = xorBytes(headXORKey, plainWindSeedHead)
+            print("RTT Head: " + bytesToHex(rttHead))
+            print("Wind Seed Head: " + bytesToHex(windSeedHead))
+            isLoginFound = true
+        }
 
-            if (isLoginFound) {
-                if (!headLengthXORKey && hexString.startsWith(bytesToHex(rttHead))) {
-                    const withHeadBytes = packet.bPackets[0].slice(4, 8).readUInt16BE()
-                    headLengthXORKey = xorBytes(hexToBytes(zero(withHeadBytes.toString(16), 4)), plainRTTHead2) // equals to withHeadBytes X ^ 0 = X
-                    print("Found HeadLengthXorKey: " + bytesToHex(headLengthXORKey))
-                }
+        if (isLoginFound) {
+            if (!headLengthXORKey && hexString.startsWith(bytesToHex(rttHead))) {
+                const withHeadBytes = packet.bPacket.slice(4, 8).readUInt16BE()
+                headLengthXORKey = xorBytes(hexToBytes(zero(withHeadBytes.toString(16), 4)), plainRTTHead2) // equals to withHeadBytes X ^ 0 = X
+                print("Found HeadLengthXorKey: " + bytesToHex(headLengthXORKey))
             }
         }
     })
 
     allPackets.forEach(packet => {
-        if (packet.bPackets.length > 0) {
-            const hexString = packet.bPackets[0].toString("hex")
-            if (headLengthXORKey && hexString.startsWith(bytesToHex(windSeedHead)) && hexString.length > 2000) {
-                let offset = xorBytes(hexToBytes(zero(packet.bPackets[0].slice(4, 8).readUInt16BE().toString(16), 4)), headLengthXORKey)[1]
-                offset += (4 + 4 + 4 + 8) / 2
-                print("Head Offset: " + offset)
-                print("Offset Start Point Hex: " + packet.bPackets[0].slice(offset, offset + 1).toString("hex"))
-                let sliceBytes = packet.bPackets[0].slice(offset)
-                xor(sliceBytes, plainText)
-                let sliceString = sliceBytes.toString("hex")
-                const combinedKeyFeature = bytesToHex(headXORKey) + bytesToHex(headLengthXORKey)
-                print("Combined Key Feature: " + combinedKeyFeature)
-                let lastIndex = -1
-                let index = 0
-                let dict = {}
-                while (index != -1) {
-                    index = sliceString.indexOf(combinedKeyFeature, lastIndex + 1)
-                    print("lastIndex: " + lastIndex + " index: " + index + " diff: " + (index - lastIndex))
-                    if (lastIndex > 0 && index - lastIndex == 4096 * 2) {
-                        const potentialKey = sliceString.slice(lastIndex, index)
-                        dict[potentialKey] = (dict[potentialKey] || 0) + 1
-                    }
-                    lastIndex = index
+        const hexString = packet.bPacket.toString("hex")
+        if (headLengthXORKey && hexString.startsWith(bytesToHex(windSeedHead)) && hexString.length > 2000) {
+            let offset = xorBytes(hexToBytes(zero(packet.bPacket.slice(4, 8).readUInt16BE().toString(16), 4)), headLengthXORKey)[1]
+            offset += (4 + 4 + 4 + 8) / 2
+            print("Head Offset: " + offset)
+            print("Offset Start Point Hex: " + packet.bPacket.slice(offset, offset + 1).toString("hex"))
+            let sliceBytes = packet.bPacket.slice(offset)
+            xor(sliceBytes, plainText)
+            let sliceString = sliceBytes.toString("hex")
+            const combinedKeyFeature = bytesToHex(headXORKey) + bytesToHex(headLengthXORKey)
+            print("Combined Key Feature: " + combinedKeyFeature)
+            let lastIndex = -1
+            let index = 0
+            let dict = {}
+            while (index != -1) {
+                index = sliceString.indexOf(combinedKeyFeature, lastIndex + 1)
+                print("lastIndex: " + lastIndex + " index: " + index + " diff: " + (index - lastIndex))
+                if (lastIndex > 0 && index - lastIndex == 4096 * 2) {
+                    const potentialKey = sliceString.slice(lastIndex, index)
+                    dict[potentialKey] = (dict[potentialKey] || 0) + 1
                 }
-                if (Object.keys(dict).length > 0) {
-                    const sortedDict = sortDict(dict)
-                    for (let key in sortedDict) {
-                        print("Key: " + sortedDict[key][0].slice(0, 32) + " Count: " + sortedDict[key][1])
-                    }
-                    const file = fs.createWriteStream("key.txt")
-                    const finalKey = sortedDict[sortedDict.length - 1][0]
-                    const finalKeyBase64 = Buffer.from(finalKey, "hex").toString("base64")
-                    file.write(finalKeyBase64)
-                    file.end()
-                    return
+                lastIndex = index
+            }
+            if (Object.keys(dict).length > 0) {
+                const sortedDict = sortDict(dict)
+                for (let key in sortedDict) {
+                    print("Key: " + sortedDict[key][0].slice(0, 32) + " Count: " + sortedDict[key][1])
                 }
+                const file = fs.createWriteStream("key.txt")
+                const finalKey = sortedDict[sortedDict.length - 1][0]
+                const finalKeyBase64 = Buffer.from(finalKey, "hex").toString("base64")
+                file.write(finalKeyBase64)
+                file.end()
+                finalXORKeyHex = Buffer.from(finalKeyBase64, "base64").toString("hex")
+                return
             }
         }
     })
+
+    const file = fs.createWriteStream("decrypted-pcap(non-gettoken).log")
+    let finalXORKey = hexToBytes(finalXORKeyHex)
+    file.write("# finalXORKey: " + bytesToHex(finalXORKey))
+    allPackets.forEach(packet => {
+        const hexString = packet.bPacket.toString("hex")
+        const head = hexString.slice(0, 4)
+
+        if (head != dispatchHead) {
+            let decrypted = xorBytes(hexToBytes(hexString), finalXORKey)
+            
+            file.write("# " + hexString + '\n')
+            file.write(bytesToHex(decrypted) + '\n')
+        }
+    })
+    file.end()
 })
